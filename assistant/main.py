@@ -20,7 +20,7 @@ from logger import setup_logger
 from llm_engine import check_ollama_status, query_ollama
 from command_router import route_command
 from security import validate_api_token
-from telegram_bot import create_bot, set_bot_commands
+from telegram_interface import create_bot, set_bot_commands
 
 # ── Logger ────────────────────────────────────────────────────────────
 logger = setup_logger("main", config.LOG_FILE, config.LOG_LEVEL)
@@ -87,7 +87,7 @@ def _run_telegram_bot(bot_app):
 # ── FastAPI App ───────────────────────────────────────────────────────
 app = FastAPI(
     title=f"{config.APP_NAME} API",
-    description="Chapna — Personal AI Assistant with full PC access via Telegram",
+    description="Chapna — Secure local AI assistant with strict action whitelists",
     version=config.APP_VERSION,
     lifespan=lifespan,
 )
