@@ -1,8 +1,8 @@
 """
-main.py — Entry point for the AI Assistant.
+main.py — Entry point for Chapna AI Assistant.
 
 Starts the FastAPI server and Telegram bot together.
-The FastAPI server provides a health endpoint and optional local API.
+The FastAPI server provides a health endpoint and local API.
 The Telegram bot runs as the primary user interface.
 """
 
@@ -10,13 +10,16 @@ import asyncio
 import threading
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
+from typing import Optional
 
 import config
+import database
 from logger import setup_logger
 from llm_engine import check_ollama_status, query_ollama
 from command_router import route_command
+from security import validate_api_token
 from telegram_bot import create_bot, set_bot_commands
 
 # ── Logger ────────────────────────────────────────────────────────────
@@ -28,8 +31,12 @@ logger = setup_logger("main", config.LOG_FILE, config.LOG_LEVEL)
 async def lifespan(app: FastAPI):
     """Startup and shutdown events for FastAPI."""
     logger.info("=" * 60)
-    logger.info("  🤖 AI Assistant starting up...")
+    logger.info(f"  🤖 {config.APP_NAME} v{config.APP_VERSION} starting up...")
     logger.info("=" * 60)
+
+    # Initialize database
+    database.init_database()
+    logger.info("✅ SQLite database initialized")
 
     # Check Ollama status
     ollama_ok = await check_ollama_status(config.OLLAMA_BASE_URL)
@@ -47,7 +54,6 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Telegram bot...")
     bot_app = create_bot()
 
-    # Run the bot in a separate thread
     bot_thread = threading.Thread(
         target=_run_telegram_bot,
         args=(bot_app,),
@@ -57,12 +63,13 @@ async def lifespan(app: FastAPI):
     logger.info("✅ Telegram bot started in background thread")
 
     logger.info(f"🌐 FastAPI server running at http://{config.API_HOST}:{config.API_PORT}")
+    logger.info(f"🔐 Allowed users: {config.TELEGRAM_ALLOWED_USER_IDS}")
     logger.info("=" * 60)
 
     yield  # Application runs here
 
     # Shutdown
-    logger.info("Shutting down AI Assistant...")
+    logger.info(f"Shutting down {config.APP_NAME}...")
 
 
 def _run_telegram_bot(bot_app):
@@ -79,9 +86,9 @@ def _run_telegram_bot(bot_app):
 
 # ── FastAPI App ───────────────────────────────────────────────────────
 app = FastAPI(
-    title="AI Assistant API",
-    description="Local AI assistant with full PC access via Telegram",
-    version="1.0.0",
+    title=f"{config.APP_NAME} API",
+    description="Chapna — Personal AI Assistant with full PC access via Telegram",
+    version=config.APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -93,6 +100,8 @@ async def health_check():
     ollama_ok = await check_ollama_status(config.OLLAMA_BASE_URL)
     return {
         "status": "healthy",
+        "app": config.APP_NAME,
+        "version": config.APP_VERSION,
         "ollama": "online" if ollama_ok else "offline",
         "model": config.OLLAMA_MODEL,
     }
@@ -106,12 +115,21 @@ class CommandRequest(BaseModel):
 
 
 @app.post("/command")
-async def execute_command(request: CommandRequest):
+async def execute_command(
+    request: CommandRequest,
+    authorization: Optional[str] = Header(None),
+):
     """
     Execute a command via local API (for testing or local integrations).
 
     This endpoint is only accessible on localhost.
+    Requires API_TOKEN if configured.
     """
+    # Token validation
+    token = (authorization or "").replace("Bearer ", "")
+    if not validate_api_token(token, config.API_TOKEN):
+        raise HTTPException(status_code=401, detail="Invalid API token")
+
     if not request.message:
         raise HTTPException(status_code=400, detail="Message is required")
 
@@ -120,6 +138,7 @@ async def execute_command(request: CommandRequest):
         request.message,
         base_url=config.OLLAMA_BASE_URL,
         model=config.OLLAMA_MODEL,
+        user_id=request.user_id,
     )
 
     # Route to action
@@ -135,10 +154,11 @@ async def execute_command(request: CommandRequest):
 # ── Entry Point ───────────────────────────────────────────────────────
 if __name__ == "__main__":
     print()
-    print("  ╔═══════════════════════════════════════╗")
-    print("  ║    🤖 AI Assistant — Starting...      ║")
-    print("  ║    Telegram + Ollama + FastAPI         ║")
-    print("  ╚═══════════════════════════════════════╝")
+    print("  ╔═══════════════════════════════════════════════╗")
+    print(f"  ║    🤖 {config.APP_NAME} v{config.APP_VERSION} — Starting...          ║")
+    print("  ║    Telegram + Ollama + FastAPI + SQLite       ║")
+    print("  ║    Your Personal AI Assistant                 ║")
+    print("  ╚═══════════════════════════════════════════════╝")
     print()
 
     uvicorn.run(

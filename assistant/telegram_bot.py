@@ -1,16 +1,16 @@
 """
-telegram_bot.py — Telegram bot interface for the AI Assistant.
+telegram_bot.py — Telegram bot interface for Chapna AI Assistant.
 
 Handles all Telegram communication:
-- User authentication (only your user ID is allowed)
+- User authentication (only allowed user IDs)
 - Text message processing through LLM → Router pipeline
-- Slash commands (/start, /help, /status, /screenshot)
+- Photo/image processing for vision model analysis
+- Slash commands (/start, /help, /status, /screenshot, /stats, /clear)
 - File sending (documents, photos)
 - Confirmation flow for dangerous actions
 """
 
 import os
-import logging
 from telegram import Update, BotCommand
 from telegram.ext import (
     Application,
@@ -22,7 +22,7 @@ from telegram.ext import (
 
 import config
 from security import verify_user, sanitize_input, RateLimiter
-from logger import setup_logger, log_command
+from logger import setup_logger, log_command, log_security_event
 from llm_engine import query_ollama, check_ollama_status
 from command_router import (
     route_command,
@@ -31,6 +31,7 @@ from command_router import (
 )
 from system_control import get_system_info
 from screenshot import take_screenshot
+import database
 
 # ── Setup ─────────────────────────────────────────────────────────────
 logger = setup_logger("telegram", config.LOG_FILE, config.LOG_LEVEL)
@@ -42,10 +43,10 @@ def auth_required(func):
     """Decorator to verify the user is authorized before handling."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        if not verify_user(user_id, config.TELEGRAM_ALLOWED_USER_ID):
-            logger.warning(f"Unauthorized access attempt from user_id={user_id}")
+        if not verify_user(user_id, config.TELEGRAM_ALLOWED_USER_IDS):
+            log_security_event(logger, "AUTH_FAIL", user_id, "Unauthorized access attempt")
             await update.message.reply_text(
-                "🚫 Access Denied. You are not authorized to use this bot."
+                "🚫 Access Denied. You are not authorized to use Chapna."
             )
             return
         return await func(update, context)
@@ -57,11 +58,13 @@ def auth_required(func):
 @auth_required
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
+    user_name = update.effective_user.first_name or "Boss"
     await update.message.reply_text(
-        "🤖 **AI Assistant is online!**\n\n"
-        "I have full access to your PC. Just tell me what you need.\n\n"
-        "Type /help to see what I can do.\n"
-        "Type /status to check system status.",
+        f"🤖 **Chapna is online, {user_name}!**\n\n"
+        f"I have full access to your PC. Just tell me what you need.\n\n"
+        f"🧠 AI Model: `{config.OLLAMA_MODEL}`\n"
+        f"📡 Send me text or photos — I can understand both!\n\n"
+        f"Type /help to see what I can do.",
         parse_mode="Markdown",
     )
     log_command(logger, update.effective_user.id, "/start", "start", "Welcome sent")
@@ -71,7 +74,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     help_text = (
-        "🤖 **AI Assistant — Help**\n\n"
+        "🤖 **Chapna — Your Personal AI Assistant**\n\n"
         "Just tell me what you want in natural language! Examples:\n\n"
         "📂 *Files:*\n"
         '  • "Show me files on my Desktop"\n'
@@ -82,14 +85,23 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '  • "Open Chrome"\n'
         '  • "Run ipconfig"\n'
         '  • "Show system info"\n'
-        '  • "Take a screenshot"\n\n'
+        '  • "Take a screenshot"\n'
+        '  • "Lock my PC"\n'
+        '  • "Set volume to 50"\n\n'
+        "📸 *Vision:*\n"
+        "  • Send a photo and I'll analyze it!\n\n"
         "📧 *Messaging:*\n"
         '  • "Send an email to john@email.com"\n\n'
+        "📝 *Notes:*\n"
+        '  • "Save a note: Buy groceries"\n'
+        '  • "Show my notes"\n\n'
         "📋 *Commands:*\n"
-        "  /start — Start the bot\n"
+        "  /start — Start Chapna\n"
         "  /help — This help menu\n"
         "  /status — System status\n"
-        "  /screenshot — Quick screenshot"
+        "  /screenshot — Quick screenshot\n"
+        "  /stats — Your usage stats\n"
+        "  /clear — Clear chat history"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
     log_command(logger, update.effective_user.id, "/help", "help", "Help sent")
@@ -108,9 +120,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sys_info = await get_system_info()
 
     status_text = (
-        f"🤖 **Assistant Status**\n\n"
+        f"🤖 **Chapna Status**\n\n"
         f"🧠 Ollama: {ollama_status}\n"
-        f"📡 Model: {config.OLLAMA_MODEL}\n\n"
+        f"📡 Model: `{config.OLLAMA_MODEL}`\n\n"
         f"{sys_info}"
     )
     await update.message.reply_text(status_text, parse_mode="Markdown")
@@ -132,11 +144,42 @@ async def cmd_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         with open(screenshot_path, "rb") as photo:
-            await update.message.reply_photo(photo=photo, caption="📸 Screenshot")
+            await update.message.reply_photo(photo=photo, caption="📸 Screenshot — Chapna")
         log_command(
             logger, update.effective_user.id,
             "/screenshot", "screenshot", "Screenshot sent",
         )
+
+
+@auth_required
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /stats command — show usage statistics."""
+    user_id = update.effective_user.id
+    stats = database.get_command_stats(user_id)
+
+    text = (
+        f"📊 **Your Chapna Stats**\n\n"
+        f"📌 Total commands: {stats['total_commands']}\n"
+        f"✅ Successful: {stats['success_count']}\n"
+        f"❌ Failed: {stats['failure_count']}\n\n"
+    )
+
+    if stats["top_actions"]:
+        text += "🏆 **Top Actions:**\n"
+        for item in stats["top_actions"]:
+            text += f"  • {item['action']}: {item['count']} times\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+    log_command(logger, user_id, "/stats", "stats", "Stats sent")
+
+
+@auth_required
+async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /clear command — clear conversation history."""
+    user_id = update.effective_user.id
+    count = database.clear_history(user_id)
+    await update.message.reply_text(f"🧹 Cleared {count} messages from history.")
+    log_command(logger, user_id, "/clear", "clear_history", f"Cleared {count}")
 
 
 # ── Text Message Handler ─────────────────────────────────────────────
@@ -159,11 +202,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Rate Limiting ─────────────────────────────────────────────
     if not rate_limiter.is_allowed(user_id):
         remaining = rate_limiter.remaining(user_id)
+        log_security_event(logger, "RATE_LIMIT", user_id, f"remaining={remaining}")
         await update.message.reply_text(
             f"⏱️ Rate limited. Please wait a moment.\n"
             f"Remaining requests: {remaining}"
         )
-        logger.warning(f"Rate limited user {user_id}")
         return
 
     # ── Check for pending confirmation ────────────────────────────
@@ -174,6 +217,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log_command(logger, user_id, text, "confirmation", result.get("text", "")[:100])
             return
 
+    # ── Save user message to database ─────────────────────────────
+    database.save_message(user_id, "user", text)
+
     # ── Send to LLM ───────────────────────────────────────────────
     await update.message.reply_text("🧠 Thinking...")
 
@@ -181,6 +227,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text,
         base_url=config.OLLAMA_BASE_URL,
         model=config.OLLAMA_MODEL,
+        timeout=config.OLLAMA_TIMEOUT,
+        user_id=user_id,
     )
 
     logger.info(
@@ -192,6 +240,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Route to action handler ───────────────────────────────────
     result = await route_command(parsed, user_id, config.SCREENSHOT_DIR)
 
+    # ── Save assistant response to database ───────────────────────
+    database.save_message(user_id, "assistant", result.get("text", "")[:5000], parsed.get("action"))
+
     # ── Send result ───────────────────────────────────────────────
     await _send_result(update, result)
 
@@ -200,6 +251,65 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parsed.get("action", "unknown"),
         result.get("text", "")[:100],
     )
+
+
+# ── Photo Message Handler ────────────────────────────────────────────
+
+@auth_required
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle photo messages — send to vision model for analysis.
+
+    The user can send a photo with an optional caption (question about the photo).
+    """
+    user_id = update.effective_user.id
+
+    # Rate limiting
+    if not rate_limiter.is_allowed(user_id):
+        await update.message.reply_text("⏱️ Rate limited. Please wait.")
+        return
+
+    await update.message.reply_text("👁️ Analyzing image...")
+
+    # Get the largest photo version
+    photo = update.message.photo[-1]
+    photo_file = await context.bot.get_file(photo.file_id)
+
+    # Download the photo
+    image_bytes = await photo_file.download_as_bytearray()
+
+    # Use caption as the question, or default
+    caption = update.message.caption or "What do you see in this image? Describe it in detail."
+    caption = sanitize_input(caption)
+
+    # Save user message
+    database.save_message(user_id, "user", f"[Photo] {caption}")
+
+    # Send to vision model
+    parsed = await query_ollama(
+        caption,
+        base_url=config.OLLAMA_BASE_URL,
+        model=config.OLLAMA_MODEL,
+        timeout=config.OLLAMA_TIMEOUT,
+        user_id=user_id,
+        image_data=bytes(image_bytes),
+    )
+
+    # For image analysis, the response is usually a chat action
+    response_text = parsed.get("parameters", {}).get("response", "")
+    if not response_text:
+        response_text = parsed.get("intent", "I couldn't analyze the image.")
+
+    # Save to database
+    database.save_message(user_id, "assistant", response_text[:5000], "vision")
+
+    # Send response
+    try:
+        await update.message.reply_text(response_text, parse_mode="Markdown")
+    except Exception:
+        await update.message.reply_text(response_text)
+
+    log_command(logger, user_id, f"[photo] {caption[:50]}", "vision", response_text[:100])
 
 
 async def _send_result(update: Update, result: dict):
@@ -216,7 +326,6 @@ async def _send_result(update: Update, result: dict):
         # Split long messages (Telegram limit is 4096 chars)
         while len(text) > 4000:
             chunk = text[:4000]
-            # Try markdown first, fall back to plain text
             try:
                 await update.message.reply_text(chunk, parse_mode="Markdown")
             except Exception:
@@ -263,20 +372,27 @@ def create_bot() -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("screenshot", cmd_screenshot))
+    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("clear", cmd_clear))
+
+    # Register photo handler
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Register text message handler (must be last)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Telegram bot configured successfully")
+    logger.info("Chapna Telegram bot configured successfully")
     return app
 
 
 async def set_bot_commands(app: Application):
     """Set the bot's command menu in Telegram."""
     commands = [
-        BotCommand("start", "Start the assistant"),
+        BotCommand("start", "Start Chapna"),
         BotCommand("help", "Show help"),
         BotCommand("status", "System status"),
         BotCommand("screenshot", "Take a screenshot"),
+        BotCommand("stats", "Your usage stats"),
+        BotCommand("clear", "Clear chat history"),
     ]
     await app.bot.set_my_commands(commands)

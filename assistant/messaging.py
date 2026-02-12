@@ -1,5 +1,5 @@
 """
-messaging.py — Automated messaging module for the AI Assistant.
+messaging.py — Automated messaging module for Chapna AI Assistant.
 
 Supports sending messages on behalf of the user via email (SMTP).
 Uses credentials from environment variables.
@@ -11,41 +11,30 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional
 
+import config
+from security import validate_email
+
 
 async def send_email(
     to: str,
     subject: str,
     body: str,
-    smtp_server: Optional[str] = None,
-    smtp_port: Optional[int] = None,
-    sender_email: Optional[str] = None,
-    sender_password: Optional[str] = None,
 ) -> str:
     """
     Send an email on behalf of the user.
 
-    Reads SMTP credentials from environment variables if not provided.
+    Uses SMTP credentials from config.
 
     Args:
         to: Recipient email address.
         subject: Email subject line.
         body: Email body text.
-        smtp_server: SMTP server address (default from env).
-        smtp_port: SMTP port (default from env).
-        sender_email: Sender email address (default from env).
-        sender_password: Sender app password (default from env).
 
     Returns:
         Success or error message.
     """
     try:
-        # Load from environment if not provided
-        smtp_server = smtp_server or os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = smtp_port or int(os.getenv("SMTP_PORT", "587"))
-        sender_email = sender_email or os.getenv("SENDER_EMAIL", "")
-        sender_password = sender_password or os.getenv("SENDER_PASSWORD", "")
-
-        if not sender_email or not sender_password:
+        if not config.SENDER_EMAIL or not config.SENDER_PASSWORD:
             return (
                 "❌ Email not configured. Add these to your .env file:\n"
                 "SENDER_EMAIL=your_email@gmail.com\n"
@@ -56,21 +45,21 @@ async def send_email(
                 "https://myaccount.google.com/apppasswords"
             )
 
-        # Validate inputs
-        if not to or "@" not in to:
+        # Validate recipient
+        if not to or not validate_email(to):
             return f"❌ Invalid recipient email: {to}"
 
         # Build email
         msg = MIMEMultipart()
-        msg["From"] = sender_email
+        msg["From"] = config.SENDER_EMAIL
         msg["To"] = to
         msg["Subject"] = subject or "(No Subject)"
         msg.attach(MIMEText(body or "", "plain", "utf-8"))
 
         # Send
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
+        with smtplib.SMTP(config.SMTP_SERVER, config.SMTP_PORT) as server:
             server.starttls()
-            server.login(sender_email, sender_password)
+            server.login(config.SENDER_EMAIL, config.SENDER_PASSWORD)
             server.send_message(msg)
 
         return f"✅ Email sent successfully to {to}\n📧 Subject: {subject}"
