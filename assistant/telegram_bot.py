@@ -1,5 +1,5 @@
 """
-telegram_bot.py — Telegram bot interface for Chapna AI Assistant.
+telegram_bot.py — Telegram bot interface for Clawbot.
 
 Handles all Telegram communication:
 - User authentication (only allowed user IDs)
@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 
 import config
-from security import verify_user, sanitize_input, RateLimiter
+from security import verify_user, sanitize_input, RateLimiter, extract_command_with_token
 from logger import setup_logger, log_command, log_security_event
 from llm_engine import query_ollama, check_ollama_status
 from command_router import (
@@ -46,7 +46,7 @@ def auth_required(func):
         if not verify_user(user_id, config.TELEGRAM_ALLOWED_USER_IDS):
             log_security_event(logger, "AUTH_FAIL", user_id, "Unauthorized access attempt")
             await update.message.reply_text(
-                "🚫 Access Denied. You are not authorized to use Chapna."
+                "🚫 Access Denied. You are not authorized to use Clawbot."
             )
             return
         return await func(update, context)
@@ -60,8 +60,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     user_name = update.effective_user.first_name or "Boss"
     await update.message.reply_text(
-        f"🤖 **Chapna is online, {user_name}!**\n\n"
-        f"I have full access to your PC. Just tell me what you need.\n\n"
+        f"🤖 **Clawbot is online, {user_name}!**\n\n"
+        f"I operate with strict permissions and whitelists only.\n\n"
         f"🧠 AI Model: `{config.OLLAMA_MODEL}`\n"
         f"📡 Send me text or photos — I can understand both!\n\n"
         f"Type /help to see what I can do.",
@@ -74,34 +74,31 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     help_text = (
-        "🤖 **Chapna — Your Personal AI Assistant**\n\n"
+        "🤖 **Clawbot — Your Personal AI Assistant**\n\n"
         "Just tell me what you want in natural language! Examples:\n\n"
         "📂 *Files:*\n"
         '  • "Show me files on my Desktop"\n'
         '  • "Read the file C:\\\\notes.txt"\n'
         '  • "Send me the report from Documents"\n'
-        '  • "Search for .py files"\n\n'
+        "\n"
         "🖥️ *System:*\n"
         '  • "Open Chrome"\n'
-        '  • "Run ipconfig"\n'
-        '  • "Show system info"\n'
         '  • "Take a screenshot"\n'
-        '  • "Lock my PC"\n'
-        '  • "Set volume to 50"\n\n'
+        "\n"
+        "📜 *Scripts:*\n"
+        '  • "Run the backup script"\n\n'
         "📸 *Vision:*\n"
         "  • Send a photo and I'll analyze it!\n\n"
-        "📧 *Messaging:*\n"
-        '  • "Send an email to john@email.com"\n\n'
-        "📝 *Notes:*\n"
-        '  • "Save a note: Buy groceries"\n'
-        '  • "Show my notes"\n\n'
         "📋 *Commands:*\n"
-        "  /start — Start Chapna\n"
+        "  /start — Start Clawbot\n"
         "  /help — This help menu\n"
         "  /status — System status\n"
-        "  /screenshot — Quick screenshot\n"
-        "  /stats — Your usage stats\n"
-        "  /clear — Clear chat history"
+        "  /screenshot — Quick screenshot\n\n"
+        "🔐 **Command Token:**\n"
+        "  Use one of these formats:\n"
+        "  • `<token> your command`\n"
+        "  • `token:<token> your command`\n"
+        "  For /status or /screenshot, send `/status token:<token>`"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
     log_command(logger, update.effective_user.id, "/help", "help", "Help sent")
@@ -110,6 +107,16 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @auth_required
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /status command."""
+    if config.TELEGRAM_COMMAND_TOKEN:
+        raw = update.message.text or ""
+        tail = raw.replace("/status", "", 1).strip()
+        if tail == config.TELEGRAM_COMMAND_TOKEN:
+            ok = True
+        else:
+            ok, _ = extract_command_with_token(tail, config.TELEGRAM_COMMAND_TOKEN)
+        if not ok:
+            await update.message.reply_text("🔐 Invalid or missing command token.")
+            return
     await update.message.reply_text("⏳ Gathering system info...")
 
     # Check Ollama
@@ -120,7 +127,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sys_info = await get_system_info()
 
     status_text = (
-        f"🤖 **Chapna Status**\n\n"
+        f"🤖 **Clawbot Status**\n\n"
         f"🧠 Ollama: {ollama_status}\n"
         f"📡 Model: `{config.OLLAMA_MODEL}`\n\n"
         f"{sys_info}"
@@ -132,6 +139,16 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @auth_required
 async def cmd_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /screenshot command — quick screenshot without LLM."""
+    if config.TELEGRAM_COMMAND_TOKEN:
+        raw = update.message.text or ""
+        tail = raw.replace("/screenshot", "", 1).strip()
+        if tail == config.TELEGRAM_COMMAND_TOKEN:
+            ok = True
+        else:
+            ok, _ = extract_command_with_token(tail, config.TELEGRAM_COMMAND_TOKEN)
+        if not ok:
+            await update.message.reply_text("🔐 Invalid or missing command token.")
+            return
     await update.message.reply_text("📸 Capturing screen...")
 
     screenshot_path = await take_screenshot(config.SCREENSHOT_DIR)
@@ -144,42 +161,11 @@ async def cmd_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         with open(screenshot_path, "rb") as photo:
-            await update.message.reply_photo(photo=photo, caption="📸 Screenshot — Chapna")
+            await update.message.reply_photo(photo=photo, caption="📸 Screenshot — Clawbot")
         log_command(
             logger, update.effective_user.id,
             "/screenshot", "screenshot", "Screenshot sent",
         )
-
-
-@auth_required
-async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /stats command — show usage statistics."""
-    user_id = update.effective_user.id
-    stats = database.get_command_stats(user_id)
-
-    text = (
-        f"📊 **Your Chapna Stats**\n\n"
-        f"📌 Total commands: {stats['total_commands']}\n"
-        f"✅ Successful: {stats['success_count']}\n"
-        f"❌ Failed: {stats['failure_count']}\n\n"
-    )
-
-    if stats["top_actions"]:
-        text += "🏆 **Top Actions:**\n"
-        for item in stats["top_actions"]:
-            text += f"  • {item['action']}: {item['count']} times\n"
-
-    await update.message.reply_text(text, parse_mode="Markdown")
-    log_command(logger, user_id, "/stats", "stats", "Stats sent")
-
-
-@auth_required
-async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /clear command — clear conversation history."""
-    user_id = update.effective_user.id
-    count = database.clear_history(user_id)
-    await update.message.reply_text(f"🧹 Cleared {count} messages from history.")
-    log_command(logger, user_id, "/clear", "clear_history", f"Cleared {count}")
 
 
 # ── Text Message Handler ─────────────────────────────────────────────
@@ -217,14 +203,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log_command(logger, user_id, text, "confirmation", result.get("text", "")[:100])
             return
 
+    ok, cleaned = extract_command_with_token(text, config.TELEGRAM_COMMAND_TOKEN)
+    if not ok:
+        await update.message.reply_text("🔐 Invalid or missing command token.")
+        return
+    if not cleaned:
+        await update.message.reply_text("❓ Empty message received.")
+        return
+
     # ── Save user message to database ─────────────────────────────
-    database.save_message(user_id, "user", text)
+    database.save_message(user_id, "user", cleaned)
 
     # ── Send to LLM ───────────────────────────────────────────────
     await update.message.reply_text("🧠 Thinking...")
 
     parsed = await query_ollama(
-        text,
+        cleaned,
         base_url=config.OLLAMA_BASE_URL,
         model=config.OLLAMA_MODEL,
         timeout=config.OLLAMA_TIMEOUT,
@@ -247,7 +241,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_result(update, result)
 
     log_command(
-        logger, user_id, text,
+        logger, user_id, cleaned,
         parsed.get("action", "unknown"),
         result.get("text", "")[:100],
     )
@@ -281,6 +275,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Use caption as the question, or default
     caption = update.message.caption or "What do you see in this image? Describe it in detail."
     caption = sanitize_input(caption)
+    ok, cleaned = extract_command_with_token(caption, config.TELEGRAM_COMMAND_TOKEN)
+    if not ok:
+        await update.message.reply_text("🔐 Invalid or missing command token.")
+        return
+    caption = cleaned or "Describe the image clearly."
 
     # Save user message
     database.save_message(user_id, "user", f"[Photo] {caption}")
@@ -372,8 +371,6 @@ def create_bot() -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("screenshot", cmd_screenshot))
-    app.add_handler(CommandHandler("stats", cmd_stats))
-    app.add_handler(CommandHandler("clear", cmd_clear))
 
     # Register photo handler
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -381,18 +378,16 @@ def create_bot() -> Application:
     # Register text message handler (must be last)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Chapna Telegram bot configured successfully")
+    logger.info("Clawbot Telegram bot configured successfully")
     return app
 
 
 async def set_bot_commands(app: Application):
     """Set the bot's command menu in Telegram."""
     commands = [
-        BotCommand("start", "Start Chapna"),
+        BotCommand("start", "Start Clawbot"),
         BotCommand("help", "Show help"),
         BotCommand("status", "System status"),
         BotCommand("screenshot", "Take a screenshot"),
-        BotCommand("stats", "Your usage stats"),
-        BotCommand("clear", "Clear chat history"),
     ]
     await app.bot.set_my_commands(commands)

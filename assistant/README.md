@@ -1,6 +1,6 @@
-# 🤖 AI Assistant — Full PC Control via Telegram
+# 🤖 Clawbot — Secure Local AI Assistant via Telegram (Ollama)
 
-A personal AI agent that gives you **full control of your Windows PC** from your phone via **Telegram**, powered by **Ollama** (100% free, 100% local).
+A secure, permissioned personal AI agent that runs locally on your Windows PC and is controlled via Telegram, powered by Ollama.
 
 ---
 
@@ -10,11 +10,12 @@ A personal AI agent that gives you **full control of your Windows PC** from your
 |---------|-------------|
 | 🧠 **AI Brain** | Ollama LLM interprets natural language commands |
 | 📱 **Telegram Control** | Send commands from your phone |
-| 📂 **File Access** | Read, write, delete, list, search, send any file |
-| 🖥️ **System Control** | Open apps, run commands, kill processes |
+| 📂 **File Access** | Read, list, send files from allowed directories only |
+| 🖥️ **App Control** | Open apps from a strict whitelist |
 | 📸 **Screenshots** | Capture your screen remotely |
-| 📧 **Email** | Send emails on your behalf |
-| 🔐 **User Lock** | Only YOUR Telegram ID can use the bot |
+| 📜 **Safe Scripts** | Run predefined scripts only |
+| 🔐 **User Lock** | Only allowed Telegram IDs can use the bot |
+| 🧪 **Token Gate** | Command token required before execution |
 | 📊 **System Info** | CPU, RAM, disk, battery, network status |
 | 📝 **Logging** | Every action is logged with timestamps |
 
@@ -52,7 +53,10 @@ copy .env.example .env
 Edit `.env` with your values:
 ```env
 TELEGRAM_BOT_TOKEN=7123456789:AAFxxxxxxxxxxxxxxxxxxxxxxxx
-TELEGRAM_ALLOWED_USER_ID=123456789
+TELEGRAM_ALLOWED_USER_IDS=123456789
+TELEGRAM_COMMAND_TOKEN=your_strong_command_token
+API_TOKEN=your_local_api_token
+ALLOWED_FILE_DIRS=C:\Users\YourUser\Desktop;C:\Users\YourUser\Documents
 OLLAMA_MODEL=llama3.2
 ```
 
@@ -78,14 +82,12 @@ python main.py
 |------------|-------------|
 | "Open Chrome" | Launches Chrome |
 | "Show files on Desktop" | Lists Desktop contents |
-| "Read C:\notes.txt" | Shows file contents |
-| "Send me the report.pdf" | Sends file via Telegram |
-| "Take a screenshot" | Captures & sends screenshot |
-| "Run ipconfig" | Runs command, shows output |
-| "What's my system status?" | Shows CPU, RAM, disk info |
-| "Kill notepad" | Terminates notepad process |
-| "Search for .py files in projects" | Finds matching files |
-| "Send email to john@mail.com about the meeting" | Sends email |
+| "<token> read C:\notes.txt" | Shows file contents (allowed dirs only) |
+| "token:<token> send report.pdf" | Sends file via Telegram |
+| "<token> take a screenshot" | Captures & sends screenshot |
+| "<token> open chrome" | Opens Chrome from whitelist |
+| "<token> run the backup script" | Runs a predefined safe script |
+| "<token> status" | Shows CPU, RAM, disk info |
 
 ### Slash Commands
 
@@ -107,10 +109,10 @@ assistant/
 ├── llm_engine.py        # Ollama LLM integration
 ├── command_router.py    # Intent → action dispatcher
 ├── telegram_bot.py      # Telegram bot handlers
-├── file_manager.py      # File read/write/delete/list/search
-├── system_control.py    # App launcher, shell, processes
+├── telegram_interface.py# Telegram interface wrapper
+├── file_manager.py      # File read/list/send (whitelisted dirs)
+├── system_control.py    # System info utilities
 ├── screenshot.py        # Screen capture
-├── messaging.py         # Email automation
 ├── security.py          # User auth & rate limiting
 ├── logger.py            # Structured rotating logs
 ├── requirements.txt     # Python dependencies
@@ -122,34 +124,28 @@ assistant/
 
 ## 🔐 Security Notes
 
-- **User locked**: Only the Telegram ID in `.env` can use the bot
-- **Rate limited**: 30 requests/minute (configurable)
-- **Confirmation required**: Dangerous actions (delete, kill) ask you to confirm
-- **Local only**: FastAPI binds to `127.0.0.1` — not exposed to the internet
+- **User locked**: Only allowed Telegram IDs can use the bot
+- **Token gated**: Commands require a command token
+- **Strict whitelist**: Only allowed apps, scripts, and directories are accessible
+- **No raw shell**: No arbitrary shell commands are executed
+- **Local only**: FastAPI binds to `127.0.0.1`
 - **Ollama local**: Your AI runs on your PC — no data sent to cloud
-- **Logged**: Every command and result is logged to `assistant.log`
+- **Logged**: Every command and result is logged to `clawbot.log`
 
 ### ⚠️ Important
 
-This bot has **full access** to your PC. Keep your:
+This bot is permissioned and whitelisted. Keep your:
 - `.env` file **private** (never commit it)
 - Telegram Bot Token **secret**
 - PC **behind a firewall**
 
----
+## 🛡️ Security Hardening Recommendations
 
-## 📧 Email Setup (Optional)
-
-To enable email sending, add to `.env`:
-
-```env
-SENDER_EMAIL=your_email@gmail.com
-SENDER_PASSWORD=your_app_password
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=587
-```
-
-For Gmail: create an **App Password** at https://myaccount.google.com/apppasswords
+- Use a long random token for `TELEGRAM_COMMAND_TOKEN` and rotate it periodically
+- Keep `ALLOWED_FILE_DIRS` minimal and avoid sensitive folders
+- Remove unused apps from `WHITELISTED_APPS`
+- Store logs on an encrypted drive if possible
+- Keep Windows and Python dependencies updated
 
 ---
 
@@ -174,9 +170,10 @@ For Gmail: create an **App Password** at https://myaccount.google.com/apppasswor
 | "Cannot connect to Ollama" | Run `ollama serve` in a terminal |
 | Bot doesn't respond | Check `TELEGRAM_BOT_TOKEN` in `.env` |
 | "Access Denied" | Your Telegram user ID doesn't match `.env` |
+| "Invalid token" | Verify `TELEGRAM_COMMAND_TOKEN` and command format |
 | Screenshot fails | Ensure no remote desktop lock |
 | Email fails | Use Gmail App Password, not regular password |
 
 ---
 
-**Built with ❤️ — 100% Free, 100% Local, 100% Yours**
+**Clawbot — 100% Free, 100% Local, 100% Yours**

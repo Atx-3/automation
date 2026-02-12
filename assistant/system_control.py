@@ -1,12 +1,8 @@
 """
-system_control.py — System command execution and process management for Chapna.
-
-Provides shell command execution, process management,
-and system information retrieval.
+system_control.py — System information utilities for Chapna.
 """
 
 import os
-import subprocess
 import platform
 import psutil
 from typing import Optional
@@ -15,84 +11,6 @@ from logger import setup_logger
 import config
 
 logger = setup_logger("system", config.LOG_FILE, config.LOG_LEVEL)
-
-
-async def run_command(command: str, timeout: int = 60) -> str:
-    """
-    Execute a shell command and return the output.
-
-    Args:
-        command: The command to execute.
-        timeout: Maximum execution time in seconds.
-
-    Returns:
-        Command output (stdout + stderr) or error message.
-    """
-    try:
-        logger.info(f"Executing command: {command}")
-
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=os.path.expanduser("~"),
-        )
-
-        output = ""
-        if result.stdout:
-            output += result.stdout
-        if result.stderr:
-            output += f"\n[STDERR]\n{result.stderr}"
-
-        if not output.strip():
-            output = f"✅ Command executed successfully (exit code: {result.returncode})"
-        else:
-            # Truncate for Telegram
-            if len(output) > 3800:
-                output = output[:3800] + f"\n\n... [output truncated]"
-            output = f"```\n{output.strip()}\n```"
-
-        logger.info(f"Command exit code: {result.returncode}")
-        return output
-
-    except subprocess.TimeoutExpired:
-        return f"⏰ Command timed out after {timeout} seconds."
-    except Exception as e:
-        logger.error(f"Command error: {e}")
-        return f"❌ Error executing command: {str(e)}"
-
-
-async def kill_process(process_name: str) -> str:
-    """
-    Kill a running process by name.
-
-    Args:
-        process_name: Name of the process to kill.
-
-    Returns:
-        Success or error message.
-    """
-    try:
-        killed = 0
-        for proc in psutil.process_iter(["name", "pid"]):
-            try:
-                if process_name.lower() in proc.info["name"].lower():
-                    proc.terminate()
-                    killed += 1
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-
-        if killed > 0:
-            logger.info(f"Killed {killed} process(es): {process_name}")
-            return f"✅ Terminated {killed} process(es) matching '{process_name}'"
-        else:
-            return f"❌ No running process found matching '{process_name}'"
-
-    except Exception as e:
-        logger.error(f"Kill process error: {e}")
-        return f"❌ Error killing process: {str(e)}"
 
 
 async def get_system_info() -> str:
