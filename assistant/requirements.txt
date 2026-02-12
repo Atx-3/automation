@@ -1,0 +1,21 @@
+# Core Framework
+fastapi==0.115.6
+uvicorn==0.34.0
+
+# Telegram Bot
+python-telegram-bot==21.10
+
+# Environment & Config
+python-dotenv==1.0.1
+
+# HTTP Client (for Ollama API)
+httpx==0.28.1
+
+# Screenshot
+Pillow==11.1.0
+
+# Data Validation
+pydantic==2.10.5
+
+# Process management
+psutil==6.1.1
