@@ -112,6 +112,21 @@ def sanitize_input(text: str, max_length: int = 4096) -> str:
     return text.strip()[:max_length]
 
 
+def extract_command_with_token(text: str, expected_token: str) -> tuple[bool, str]:
+    if not expected_token:
+        return True, text
+    if not text:
+        return False, ""
+    direct_prefix = expected_token + " "
+    if text.startswith(direct_prefix):
+        return True, text[len(direct_prefix):].strip()
+    pattern = r"^\s*token\s*[:=]\s*(\S+)\s+(.*)$"
+    match = re.match(pattern, text, flags=re.IGNORECASE)
+    if match and match.group(1) == expected_token:
+        return True, match.group(2).strip()
+    return False, ""
+
+
 def validate_email(email: str) -> bool:
     """
     Validate email address format.
