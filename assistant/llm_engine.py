@@ -1,5 +1,5 @@
 """
-llm_engine.py — Ollama LLM integration for Chapna AI Assistant.
+llm_engine.py — Ollama LLM integration for Clawbot.
 
 Sends user messages to the local Ollama API and parses structured
 JSON responses containing intent, action, parameters, and confidence.
@@ -17,7 +17,7 @@ import database
 
 
 # ── System Prompt ─────────────────────────────────────────────────────
-SYSTEM_PROMPT = """You are Chapna — a powerful personal AI assistant with full access to the user's Windows PC.
+SYSTEM_PROMPT = """You are Clawbot — a secure personal AI assistant running locally on the user's Windows PC.
 You interpret natural language commands and return a structured JSON response.
 
 You MUST respond with ONLY a valid JSON object in this exact format:
@@ -30,89 +30,46 @@ You MUST respond with ONLY a valid JSON object in this exact format:
 
 ALLOWED ACTIONS and their parameters:
 
-1. "open_app" — Open an application
+1. "open_app" — Open a whitelisted application
    parameters: {"app_name": "name of the app like notepad, chrome, explorer, etc."}
 
-2. "run_command" — Execute a system command
-   parameters: {"command": "the shell command to run"}
-
-3. "read_file" — Read a file's contents
+2. "read_file" — Read a file's contents from allowed directories
    parameters: {"file_path": "full path to the file"}
 
-4. "write_file" — Write content to a file
-   parameters: {"file_path": "full path", "content": "text content to write"}
-
-5. "delete_file" — Delete a file
-   parameters: {"file_path": "full path to delete"}
-
-6. "list_files" — List files in a directory
+3. "list_files" — List files in an allowed directory
    parameters: {"directory": "full directory path"}
 
-7. "send_file" — Send a file to the user via Telegram
+4. "send_file" — Send a file to the user via Telegram from allowed directories
    parameters: {"file_path": "full path to the file"}
 
-8. "screenshot" — Take a screenshot of the screen
+5. "screenshot" — Take a screenshot of the screen
    parameters: {}
 
-9. "system_info" — Get system information (CPU, RAM, disk, etc.)
+6. "run_script" — Run a predefined safe script
+   parameters: {"script_name": "name of the script"}
+
+7. "status" — Report assistant status
    parameters: {}
 
-10. "send_message" — Send an email on behalf of the user
-    parameters: {"platform": "email", "to": "recipient", "subject": "subject", "body": "message body"}
+8. "help" — Show help information
+   parameters: {}
 
-11. "kill_process" — Kill a running process
-    parameters: {"process_name": "name of the process"}
-
-12. "search_files" — Search for files by name
-    parameters: {"query": "search term", "directory": "where to search (optional)"}
-
-13. "run_script" — Run a predefined safe script
-    parameters: {"script_name": "name of the script"}
-
-14. "volume" — Control system volume
-    parameters: {"level": "up/down/mute/unmute or a number 0-100"}
-
-15. "lock" — Lock the PC screen
-    parameters: {}
-
-16. "shutdown" — Shutdown the PC
-    parameters: {"action": "shutdown/restart/sleep"}
-
-17. "save_note" — Save a note for the user
-    parameters: {"title": "note title", "content": "note content"}
-
-18. "get_notes" — Get saved notes
-    parameters: {}
-
-19. "clear_history" — Clear chat history
-    parameters: {}
-
-20. "status" — Report assistant status
-    parameters: {}
-
-21. "help" — Show help information
-    parameters: {}
-
-22. "chat" — General conversation (no PC action needed)
-    parameters: {"response": "your conversational reply"}
+9. "chat" — General conversation (no PC action needed)
+   parameters: {"response": "your conversational reply"}
 
 RULES:
 - Always respond with ONLY the JSON object, no extra text.
 - If the user wants general conversation, use the "chat" action.
 - If you're unsure what the user wants, set confidence below 0.5 and use "chat" action.
-- For dangerous operations (delete, shutdown, format), still classify them — the system will ask for confirmation.
-- Be helpful, smart, and act as a true personal Jarvis-style AI.
+- If the user requests anything outside the allowed actions, use "chat" with low confidence.
+- Be helpful, precise, and security-focused.
 """
 
 
 # All known valid actions
 VALID_ACTIONS = {
-    "open_app", "run_command", "read_file", "write_file",
-    "delete_file", "list_files", "send_file", "screenshot",
-    "system_info", "send_message", "kill_process", "search_files",
-    "run_script", "volume", "lock", "shutdown",
-    "save_note", "get_notes", "clear_history",
-    "status", "help", "chat",
+    "open_app", "read_file", "list_files", "send_file",
+    "screenshot", "run_script", "status", "help", "chat",
 }
 
 
@@ -149,7 +106,7 @@ async def query_ollama(
         if recent:
             context_lines = []
             for msg in recent[-6:]:  # Last 6 messages for context
-                role = "User" if msg["role"] == "user" else "Chapna"
+                role = "User" if msg["role"] == "user" else "Clawbot"
                 context_lines.append(f"{role}: {msg['message'][:300]}")
             context_prompt = (
                 "Recent conversation context:\n"

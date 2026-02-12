@@ -1,5 +1,5 @@
 """
-config.py — Central configuration for Chapna AI Assistant.
+config.py — Central configuration for Clawbot.
 
 Loads environment variables from .env and provides typed access
 to all settings used across the application.
@@ -25,7 +25,7 @@ def _require_env(key: str) -> str:
 
 
 # ── Application Identity ─────────────────────────────────────────────
-APP_NAME: str = "Chapna"
+APP_NAME: str = "Clawbot"
 APP_VERSION: str = "2.0.0"
 
 # ── Telegram ──────────────────────────────────────────────────────────
@@ -35,6 +35,7 @@ TELEGRAM_ALLOWED_USER_IDS: list[int] = [
     for uid in _require_env("TELEGRAM_ALLOWED_USER_IDS").split(",")
     if uid.strip()
 ]
+TELEGRAM_COMMAND_TOKEN: str = _require_env("TELEGRAM_COMMAND_TOKEN")
 
 # ── Ollama ────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -46,17 +47,24 @@ RATE_LIMIT_RPM: int = int(os.getenv("RATE_LIMIT_RPM", "30"))
 
 # ── Logging ───────────────────────────────────────────────────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_FILE: str = os.getenv("LOG_FILE", "chapna.log")
+LOG_FILE: str = os.getenv("LOG_FILE", "clawbot.log")
 
 # ── FastAPI ───────────────────────────────────────────────────────────
 API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
 API_PORT: int = int(os.getenv("API_PORT", "8000"))
-API_TOKEN: str = os.getenv("API_TOKEN", "")  # Optional token for local API
+API_TOKEN: str = _require_env("API_TOKEN")
 
 # ── Paths ─────────────────────────────────────────────────────────────
 BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
-SCREENSHOT_DIR: str = os.path.join(BASE_DIR, "screenshots")
-SCRIPTS_DIR: str = os.path.join(BASE_DIR, "scripts")
+SCREENSHOT_DIR: str = os.path.normcase(os.path.join(BASE_DIR, "screenshots"))
+SCRIPTS_DIR: str = os.path.normcase(os.path.join(BASE_DIR, "scripts"))
+ALLOWED_FILE_DIRS: list[str] = [
+    os.path.normcase(os.path.abspath(os.path.expandvars(os.path.expanduser(p.strip()))))
+    for p in os.getenv("ALLOWED_FILE_DIRS", "").split(";")
+    if p.strip()
+]
+if SCREENSHOT_DIR not in ALLOWED_FILE_DIRS:
+    ALLOWED_FILE_DIRS.append(SCREENSHOT_DIR)
 
 # ── Email (Optional) ─────────────────────────────────────────────────
 SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
@@ -73,9 +81,6 @@ WHITELISTED_APPS: dict[str, str] = {
     "paint": "mspaint.exe",
     "explorer": "explorer.exe",
     "file explorer": "explorer.exe",
-    "cmd": "cmd.exe",
-    "terminal": "cmd.exe",
-    "powershell": "powershell.exe",
     "task manager": "taskmgr.exe",
     "taskmgr": "taskmgr.exe",
     "control panel": "control.exe",
