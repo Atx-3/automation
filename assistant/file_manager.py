@@ -1,8 +1,8 @@
 """
-file_manager.py — Full file system access for the AI Assistant.
+file_manager.py — Full file system access for Chapna AI Assistant.
 
 Provides read, write, delete, list, search, and send capabilities
-for any file on the PC.
+for files on the PC.
 """
 
 import os
@@ -73,7 +73,7 @@ async def write_file(file_path: str, content: str) -> str:
             f.write(content)
 
         size = os.path.getsize(file_path)
-        return f"✅ File written successfully: {file_path} ({size} bytes)"
+        return f"✅ File written successfully: {file_path} ({_format_size(size)})"
 
     except PermissionError:
         return f"❌ Permission denied: {file_path}"
@@ -98,7 +98,7 @@ async def delete_file(file_path: str) -> str:
             return f"❌ File not found: {file_path}"
 
         if os.path.isdir(file_path):
-            return f"❌ Cannot delete a directory with this command. Use 'run_command' with rmdir."
+            return f"❌ Cannot delete a directory with this command."
 
         os.remove(file_path)
         return f"✅ File deleted: {file_path}"
@@ -140,8 +140,11 @@ async def list_files(directory: str) -> str:
             if os.path.isdir(full_path):
                 dirs.append(f"📁 {entry}/")
             else:
-                size = os.path.getsize(full_path)
-                files.append(f"📄 {entry} ({_format_size(size)})")
+                try:
+                    size = os.path.getsize(full_path)
+                    files.append(f"📄 {entry} ({_format_size(size)})")
+                except OSError:
+                    files.append(f"📄 {entry}")
 
         result_lines = [f"📂 **{directory}**\n"]
         result_lines.extend(dirs)
@@ -194,8 +197,11 @@ async def search_files(query: str, directory: str = "C:\\") -> str:
             if os.path.isdir(m):
                 result += f"📁 {m}\n"
             else:
-                size = os.path.getsize(m)
-                result += f"📄 {m} ({_format_size(size)})\n"
+                try:
+                    size = os.path.getsize(m)
+                    result += f"📄 {m} ({_format_size(size)})\n"
+                except OSError:
+                    result += f"📄 {m}\n"
 
         if len(matches) >= 50:
             result += "\n⚠️ Results limited to 50 matches."
@@ -210,7 +216,7 @@ def get_file_path(file_path: str) -> Optional[str]:
     """
     Validate and return the absolute path if the file exists.
 
-    Used by telegram_bot to send files.
+    Used to send files via Telegram.
 
     Returns:
         Absolute path if valid, None otherwise.

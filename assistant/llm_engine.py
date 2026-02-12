@@ -1,17 +1,23 @@
 """
-llm_engine.py — Ollama LLM integration for the AI Assistant.
+llm_engine.py — Ollama LLM integration for Chapna AI Assistant.
 
 Sends user messages to the local Ollama API and parses structured
 JSON responses containing intent, action, parameters, and confidence.
+
+Supports multimodal input (text + images) with vision models
+like llama3.2-vision or llava.
 """
 
 import json
+import base64
 import httpx
 from typing import Optional
 
+import database
 
-# System prompt that instructs the LLM to return structured JSON
-SYSTEM_PROMPT = """You are a personal AI assistant with full access to the user's Windows PC.
+
+# ── System Prompt ─────────────────────────────────────────────────────
+SYSTEM_PROMPT = """You are Chapna — a powerful personal AI assistant with full access to the user's Windows PC.
 You interpret natural language commands and return a structured JSON response.
 
 You MUST respond with ONLY a valid JSON object in this exact format:
@@ -36,7 +42,7 @@ ALLOWED ACTIONS and their parameters:
 4. "write_file" — Write content to a file
    parameters: {"file_path": "full path", "content": "text content to write"}
 
-5. "delete_file" — Delete a file (requires confirmation)
+5. "delete_file" — Delete a file
    parameters: {"file_path": "full path to delete"}
 
 6. "list_files" — List files in a directory
@@ -51,7 +57,7 @@ ALLOWED ACTIONS and their parameters:
 9. "system_info" — Get system information (CPU, RAM, disk, etc.)
    parameters: {}
 
-10. "send_message" — Send a message on behalf of the user
+10. "send_message" — Send an email on behalf of the user
     parameters: {"platform": "email", "to": "recipient", "subject": "subject", "body": "message body"}
 
 11. "kill_process" — Kill a running process
@@ -60,45 +66,102 @@ ALLOWED ACTIONS and their parameters:
 12. "search_files" — Search for files by name
     parameters: {"query": "search term", "directory": "where to search (optional)"}
 
-13. "status" — Report assistant status
+13. "run_script" — Run a predefined safe script
+    parameters: {"script_name": "name of the script"}
+
+14. "volume" — Control system volume
+    parameters: {"level": "up/down/mute/unmute or a number 0-100"}
+
+15. "lock" — Lock the PC screen
     parameters: {}
 
-14. "help" — Show help information
+16. "shutdown" — Shutdown the PC
+    parameters: {"action": "shutdown/restart/sleep"}
+
+17. "save_note" — Save a note for the user
+    parameters: {"title": "note title", "content": "note content"}
+
+18. "get_notes" — Get saved notes
     parameters: {}
 
-15. "chat" — General conversation (no PC action needed)
+19. "clear_history" — Clear chat history
+    parameters: {}
+
+20. "status" — Report assistant status
+    parameters: {}
+
+21. "help" — Show help information
+    parameters: {}
+
+22. "chat" — General conversation (no PC action needed)
     parameters: {"response": "your conversational reply"}
 
 RULES:
 - Always respond with ONLY the JSON object, no extra text.
 - If the user wants general conversation, use the "chat" action.
 - If you're unsure what the user wants, set confidence below 0.5 and use "chat" action.
-- For dangerous operations (delete, format), still classify them — the system will ask for confirmation.
+- For dangerous operations (delete, shutdown, format), still classify them — the system will ask for confirmation.
+- Be helpful, smart, and act as a true personal Jarvis-style AI.
 """
+
+
+# All known valid actions
+VALID_ACTIONS = {
+    "open_app", "run_command", "read_file", "write_file",
+    "delete_file", "list_files", "send_file", "screenshot",
+    "system_info", "send_message", "kill_process", "search_files",
+    "run_script", "volume", "lock", "shutdown",
+    "save_note", "get_notes", "clear_history",
+    "status", "help", "chat",
+}
 
 
 async def query_ollama(
     user_message: str,
     base_url: str = "http://localhost:11434",
-    model: str = "llama3.2",
+    model: str = "llama3.2-vision",
     timeout: float = 120.0,
+    user_id: int = 0,
+    image_data: Optional[bytes] = None,
 ) -> dict:
     """
     Send a user message to Ollama and parse the structured JSON response.
+
+    Supports multimodal input — if image_data is provided, it will be
+    sent alongside the text for vision models.
 
     Args:
         user_message: The natural language command from the user.
         base_url: Ollama API base URL.
         model: The Ollama model to use.
         timeout: Request timeout in seconds.
+        user_id: Telegram user ID (for conversation context).
+        image_data: Optional raw image bytes for vision analysis.
 
     Returns:
         Parsed dict with keys: intent, action, parameters, confidence.
         On failure, returns a fallback dict with action="chat".
     """
+    # Build context from recent conversation history
+    context_prompt = ""
+    if user_id:
+        recent = database.get_recent_messages(user_id, limit=10)
+        if recent:
+            context_lines = []
+            for msg in recent[-6:]:  # Last 6 messages for context
+                role = "User" if msg["role"] == "user" else "Chapna"
+                context_lines.append(f"{role}: {msg['message'][:300]}")
+            context_prompt = (
+                "Recent conversation context:\n"
+                + "\n".join(context_lines)
+                + "\n\nCurrent request:\n"
+            )
+
+    full_prompt = context_prompt + user_message
+
     payload = {
         "model": model,
-        "prompt": user_message,
+        "prompt": full_prompt,
         "system": SYSTEM_PROMPT,
         "stream": False,
         "format": "json",
@@ -106,6 +169,10 @@ async def query_ollama(
             "temperature": 0.1,  # Low temperature for consistent structured output
         },
     }
+
+    # Add image data for vision models
+    if image_data:
+        payload["images"] = [base64.b64encode(image_data).decode("utf-8")]
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -149,13 +216,7 @@ def _parse_llm_response(raw: str) -> dict:
         }
 
         # Validate action is a known type
-        valid_actions = {
-            "open_app", "run_command", "read_file", "write_file",
-            "delete_file", "list_files", "send_file", "screenshot",
-            "system_info", "send_message", "kill_process", "search_files",
-            "status", "help", "chat",
-        }
-        if result["action"] not in valid_actions:
+        if result["action"] not in VALID_ACTIONS:
             result["action"] = "chat"
             result["parameters"] = {
                 "response": f"I understood your intent ({result['intent']}) "
@@ -196,3 +257,21 @@ async def check_ollama_status(base_url: str = "http://localhost:11434") -> bool:
             return resp.status_code == 200
     except Exception:
         return False
+
+
+async def get_available_models(base_url: str = "http://localhost:11434") -> list[str]:
+    """
+    Get list of locally available Ollama models.
+
+    Returns:
+        List of model names.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{base_url}/api/tags")
+            if resp.status_code == 200:
+                data = resp.json()
+                return [m["name"] for m in data.get("models", [])]
+    except Exception:
+        pass
+    return []

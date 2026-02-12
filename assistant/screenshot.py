@@ -1,12 +1,11 @@
 """
-screenshot.py — Screen capture module for the AI Assistant.
+screenshot.py — Screen capture module for Chapna AI Assistant.
 
 Captures the full screen and saves it as a PNG file.
 Includes auto-cleanup of old screenshots.
 """
 
 import os
-import time
 import glob
 from datetime import datetime
 from PIL import ImageGrab
@@ -20,7 +19,7 @@ async def take_screenshot(save_dir: str = "screenshots") -> str:
         save_dir: Directory to save screenshots in.
 
     Returns:
-        Absolute path to the saved screenshot, or error message.
+        Absolute path to the saved screenshot, or error message prefixed with "ERROR:".
     """
     try:
         # Ensure save directory exists

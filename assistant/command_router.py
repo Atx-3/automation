@@ -1,26 +1,28 @@
 """
-command_router.py — Intent-to-action routing for the AI Assistant.
+command_router.py — Intent-to-action routing for Chapna AI Assistant.
 
 Takes the structured JSON output from the LLM and dispatches
 to the appropriate action handler. Includes confirmation flow
-for dangerous operations.
+for dangerous operations and permission checking.
 """
 
 import os
-from typing import Optional, Callable, Any
+from typing import Optional
 
 from file_manager import (
     read_file, write_file, delete_file,
     list_files, search_files, get_file_path,
 )
-from system_control import (
-    open_app, run_command, kill_process, get_system_info,
-)
+from system_control import run_command, kill_process, get_system_info
+from app_controller import open_app, run_safe_script, lock_screen, system_power, control_volume
 from screenshot import take_screenshot
 from messaging import send_message
+from permissions import check_permission
+import database
+
 
 # Actions that require user confirmation before executing
-DANGEROUS_ACTIONS = {"delete_file", "kill_process"}
+DANGEROUS_ACTIONS = {"delete_file", "kill_process", "shutdown", "clear_history"}
 
 # Pending confirmations: {user_id: {action, parameters}}
 _pending_confirmations: dict[int, dict] = {}
@@ -33,6 +35,8 @@ async def route_command(
 ) -> dict:
     """
     Route a parsed LLM response to the appropriate action handler.
+
+    Pipeline: Permission Check → Confidence Check → Confirmation → Execute
 
     Args:
         parsed: Dict with keys: intent, action, parameters, confidence.
@@ -50,7 +54,15 @@ async def route_command(
     confidence = parsed.get("confidence", 0.0)
     intent = parsed.get("intent", "")
 
-    # Low confidence → fall back to chat
+    # ── Permission Check ──────────────────────────────────────────
+    if not check_permission(user_id, action):
+        return {
+            "text": f"🚫 You don't have permission to perform: {action}",
+            "file_path": None,
+            "needs_confirmation": False,
+        }
+
+    # ── Low confidence → fall back to chat ────────────────────────
     if confidence < 0.3 and action != "chat":
         return {
             "text": (
@@ -81,7 +93,7 @@ async def route_command(
         }
 
     # ── Execute action ────────────────────────────────────────────
-    return await _execute_action(action, params, screenshot_dir)
+    return await _execute_action(action, params, user_id, screenshot_dir)
 
 
 async def handle_confirmation(
@@ -106,10 +118,11 @@ async def handle_confirmation(
     pending = _pending_confirmations.pop(user_id)
     reply = user_reply.strip().upper()
 
-    if reply in ("YES", "Y", "CONFIRM", "DO IT", "OK"):
+    if reply in ("YES", "Y", "CONFIRM", "DO IT", "OK", "HAAN", "HA"):
         return await _execute_action(
             pending["action"],
             pending["parameters"],
+            user_id,
             screenshot_dir,
         )
     else:
@@ -128,6 +141,7 @@ def has_pending_confirmation(user_id: int) -> bool:
 async def _execute_action(
     action: str,
     params: dict,
+    user_id: int,
     screenshot_dir: str,
 ) -> dict:
     """Execute the action and return a result dict."""
@@ -194,6 +208,44 @@ async def _execute_action(
                 directory=params.get("directory", "C:\\"),
             )
 
+        elif action == "run_script":
+            result["text"] = await run_safe_script(params.get("script_name", ""))
+
+        elif action == "volume":
+            result["text"] = await control_volume(params.get("level", ""))
+
+        elif action == "lock":
+            result["text"] = await lock_screen()
+
+        elif action == "shutdown":
+            power_action = params.get("action", "shutdown")
+            result["text"] = await system_power(power_action)
+
+        elif action == "save_note":
+            note_id = database.save_note(
+                user_id,
+                params.get("title", "Untitled"),
+                params.get("content", ""),
+            )
+            result["text"] = f"📝 Note saved! (ID: {note_id})"
+
+        elif action == "get_notes":
+            notes = database.get_notes(user_id)
+            if notes:
+                lines = ["📝 **Your Notes:**\n"]
+                for n in notes:
+                    lines.append(f"  **#{n['id']}** — {n['title']}")
+                    if n["content"]:
+                        lines.append(f"    {n['content'][:100]}")
+                    lines.append(f"    _{n['created_at']}_\n")
+                result["text"] = "\n".join(lines)
+            else:
+                result["text"] = "📝 No notes saved yet."
+
+        elif action == "clear_history":
+            count = database.clear_history(user_id)
+            result["text"] = f"🧹 Cleared {count} messages from history."
+
         elif action == "status":
             result["text"] = await get_system_info()
 
@@ -212,25 +264,45 @@ async def _execute_action(
                 f"Type /help to see what I can do."
             )
 
+        # Log to database
+        database.log_command(
+            user_id=user_id,
+            command=f"{action}",
+            action=action,
+            parameters=params,
+            result=result["text"][:500],
+            success=not result["text"].startswith("❌"),
+        )
+
     except Exception as e:
         result["text"] = f"❌ Error executing '{action}': {str(e)}"
+        database.log_command(
+            user_id=user_id,
+            command=f"{action}",
+            action=action,
+            parameters=params,
+            result=str(e),
+            success=False,
+        )
 
     return result
 
 
 def _describe_action(action: str, params: dict) -> str:
     """Create a human-readable description of an action."""
-    if action == "delete_file":
-        return f"🗑️ Delete file: {params.get('file_path', 'unknown')}"
-    elif action == "kill_process":
-        return f"💀 Kill process: {params.get('process_name', 'unknown')}"
-    return f"{action} with params {params}"
+    descriptions = {
+        "delete_file": f"🗑️ Delete file: {params.get('file_path', 'unknown')}",
+        "kill_process": f"💀 Kill process: {params.get('process_name', 'unknown')}",
+        "shutdown": f"⚡ Power: {params.get('action', 'shutdown')}",
+        "clear_history": "🧹 Clear all conversation history",
+    }
+    return descriptions.get(action, f"{action} with params {params}")
 
 
 def _get_help_text() -> str:
     """Return the help text showing available commands."""
     return (
-        "🤖 **AI Assistant — Help**\n\n"
+        "🤖 **Chapna — Your Personal AI Assistant**\n\n"
         "Just tell me what you want in natural language! Examples:\n\n"
         "📂 **Files:**\n"
         '  • "Show me files on my Desktop"\n'
@@ -242,15 +314,22 @@ def _get_help_text() -> str:
         "🖥️ **System:**\n"
         '  • "Open Chrome"\n'
         '  • "Open Notepad"\n'
-        '  • "Run dir command"\n'
+        '  • "Run ipconfig command"\n'
         '  • "Show system info"\n'
         '  • "Kill notepad process"\n'
-        '  • "Take a screenshot"\n\n'
+        '  • "Take a screenshot"\n'
+        '  • "Lock my PC"\n'
+        '  • "Set volume to 50"\n\n'
         "📧 **Messaging:**\n"
         '  • "Send an email to john@email.com"\n\n'
+        "📝 **Notes:**\n"
+        '  • "Save a note: Buy groceries"\n'
+        '  • "Show my notes"\n\n'
         "📋 **Commands:**\n"
-        "  • /start — Start the bot\n"
-        "  • /help — Show this help\n"
-        "  • /status — System status\n"
-        "  • /screenshot — Quick screenshot\n"
+        "  /start — Start Chapna\n"
+        "  /help — This help menu\n"
+        "  /status — System status\n"
+        "  /screenshot — Quick screenshot\n"
+        "  /stats — Your usage stats\n"
+        "  /clear — Clear chat history\n"
     )
