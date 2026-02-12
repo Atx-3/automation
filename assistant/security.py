@@ -1,12 +1,15 @@
 """
-security.py — Authentication and rate limiting for the AI Assistant.
+security.py — Authentication, rate limiting, and input validation for Chapna.
 
 Handles:
-- Telegram user ID verification (only the owner can use the bot)
+- Telegram user ID verification (only allowed users can use the bot)
 - Sliding-window rate limiting to prevent abuse
+- Input sanitization and validation
+- API token verification for local endpoints
 """
 
 import time
+import re
 from collections import defaultdict
 from typing import Optional
 
@@ -61,25 +64,41 @@ class RateLimiter:
         return max(0, self.max_requests - len(active))
 
 
-def verify_user(user_id: int, allowed_user_id: int) -> bool:
+def verify_user(user_id: int, allowed_user_ids: list[int]) -> bool:
     """
-    Verify that the Telegram user is the authorized owner.
+    Verify that the Telegram user is in the allowed list.
 
     Args:
         user_id: The incoming user's Telegram ID.
-        allowed_user_id: The configured owner's Telegram ID.
+        allowed_user_ids: List of authorized Telegram user IDs.
 
     Returns:
         True if the user is authorized.
     """
-    return user_id == allowed_user_id
+    return user_id in allowed_user_ids
+
+
+def validate_api_token(provided_token: str, expected_token: str) -> bool:
+    """
+    Validate an API token for local endpoint access.
+
+    Args:
+        provided_token: Token sent in the request.
+        expected_token: Expected token from config.
+
+    Returns:
+        True if token matches (or if no token is configured).
+    """
+    if not expected_token:
+        return True  # No token required
+    return provided_token == expected_token
 
 
 def sanitize_input(text: str, max_length: int = 4096) -> str:
     """
     Basic input sanitization.
 
-    Truncates excessively long messages to prevent abuse.
+    Truncates excessively long messages and strips whitespace.
 
     Args:
         text: Raw input text.
@@ -91,3 +110,17 @@ def sanitize_input(text: str, max_length: int = 4096) -> str:
     if not text:
         return ""
     return text.strip()[:max_length]
+
+
+def validate_email(email: str) -> bool:
+    """
+    Validate email address format.
+
+    Args:
+        email: Email address to validate.
+
+    Returns:
+        True if email format is valid.
+    """
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))

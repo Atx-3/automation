@@ -1,8 +1,8 @@
 """
-logger.py — Structured logging for the AI Assistant.
+logger.py — Structured logging for Chapna AI Assistant.
 
 Provides rotating file logs + console output with timestamps,
-user context, action tracking, and error reporting.
+user context, action tracking, and security event reporting.
 """
 
 import logging
@@ -12,8 +12,8 @@ from datetime import datetime
 
 
 def setup_logger(
-    name: str = "assistant",
-    log_file: str = "assistant.log",
+    name: str = "chapna",
+    log_file: str = "chapna.log",
     level: str = "INFO",
 ) -> logging.Logger:
     """
@@ -36,7 +36,7 @@ def setup_logger(
 
     # ── Format ────────────────────────────────────────────────────
     formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        fmt="%(asctime)s | %(levelname)-8s | %(name)-12s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
@@ -73,7 +73,7 @@ def log_command(
     error: str = "",
 ) -> None:
     """
-    Log a structured command entry.
+    Log a structured command entry for audit trail.
 
     Args:
         logger: Logger instance.
@@ -83,12 +83,31 @@ def log_command(
         result: The execution result summary.
         error: Error message if any.
     """
-    timestamp = datetime.now().isoformat()
     log_entry = (
-        f"[CMD] user={user_id} | command=\"{command}\" | "
+        f"[CMD] user={user_id} | command=\"{command[:200]}\" | "
         f"action={action} | result=\"{result[:200]}\" | error=\"{error}\""
     )
     if error:
         logger.error(log_entry)
     else:
         logger.info(log_entry)
+
+
+def log_security_event(
+    logger: logging.Logger,
+    event_type: str,
+    user_id: int,
+    details: str = "",
+) -> None:
+    """
+    Log a security-relevant event.
+
+    Args:
+        logger: Logger instance.
+        event_type: Type of event (AUTH_FAIL, RATE_LIMIT, BLOCKED, etc.)
+        user_id: Telegram user ID.
+        details: Additional context.
+    """
+    logger.warning(
+        f"[SECURITY] {event_type} | user={user_id} | {details}"
+    )
