@@ -1,16 +1,10 @@
 """
-app_controller.py — Application launching and system control for Chapna.
-
-Handles:
-- Opening applications from the whitelist
-- Running predefined safe scripts
-- System actions (lock, shutdown, restart, sleep)
-- Volume control
+app_controller.py — Application launching and safe script execution for Chapna.
 """
 
 import os
 import subprocess
-import ctypes
+import shlex
 from typing import Optional
 
 import config
@@ -35,51 +29,33 @@ async def open_app(app_name: str) -> str:
         app_key = app_name.lower().strip()
         app_path = config.WHITELISTED_APPS.get(app_key)
 
-        if app_path:
-            # Handle ms-settings: protocol
+        if not app_path:
+            known = ", ".join(sorted(config.WHITELISTED_APPS.keys()))
+            return (
+                f"❌ Application not allowed: {app_name}\n"
+                f"✅ Allowed apps: {known}"
+            )
+
+        if isinstance(app_path, (list, tuple)):
+            cmd = list(app_path)
+        else:
             if app_path.startswith("ms-settings:"):
                 os.startfile(app_path)
                 logger.info(f"Opened app: {app_name} ({app_path})")
                 return f"✅ Opened: {app_name}"
-
-            # Handle commands with arguments (e.g., Discord's update.exe)
-            if " " in app_path and not os.path.exists(app_path):
-                subprocess.Popen(
-                    app_path,
-                    shell=False,
-                    creationflags=subprocess.DETACHED_PROCESS,
-                )
+            if os.path.exists(app_path):
+                cmd = [app_path]
             else:
-                subprocess.Popen(
-                    [app_path],
-                    shell=False,
-                    creationflags=subprocess.DETACHED_PROCESS,
-                )
+                cmd = shlex.split(app_path, posix=False)
 
-            logger.info(f"Opened app: {app_name} ({app_path})")
-            return f"✅ Opened: {app_name}"
+        subprocess.Popen(
+            cmd,
+            shell=False,
+            creationflags=subprocess.DETACHED_PROCESS,
+        )
 
-        # Try to open as a program name directly
-        try:
-            subprocess.Popen(
-                [app_name],
-                shell=False,
-                creationflags=subprocess.DETACHED_PROCESS,
-            )
-            logger.info(f"Opened app directly: {app_name}")
-            return f"✅ Opened: {app_name}"
-        except FileNotFoundError:
-            # Try os.startfile as last resort
-            try:
-                os.startfile(app_name)
-                logger.info(f"Opened via startfile: {app_name}")
-                return f"✅ Opened: {app_name}"
-            except Exception:
-                known = ", ".join(sorted(config.WHITELISTED_APPS.keys()))
-                return (
-                    f"❌ Could not find application: {app_name}\n"
-                    f"💡 Known apps: {known}"
-                )
+        logger.info(f"Opened app: {app_name} ({app_path})")
+        return f"✅ Opened: {app_name}"
 
     except Exception as e:
         logger.error(f"Error opening app {app_name}: {e}")
@@ -109,6 +85,14 @@ async def run_safe_script(script_name: str) -> str:
 
     if not os.path.isfile(script_path):
         return f"❌ Script file not found: {script_path}"
+
+    try:
+        script_path = os.path.abspath(script_path)
+        scripts_root = os.path.abspath(config.SCRIPTS_DIR)
+        if os.path.commonpath([script_path, scripts_root]) != scripts_root:
+            return "❌ Script path is outside the allowed scripts directory."
+    except Exception:
+        return "❌ Script path validation failed."
 
     try:
         # Determine how to run the script
@@ -151,105 +135,3 @@ async def run_safe_script(script_name: str) -> str:
         return f"❌ Error running script: {str(e)}"
 
 
-async def lock_screen() -> str:
-    """Lock the Windows screen."""
-    try:
-        ctypes.windll.user32.LockWorkStation()
-        logger.info("Screen locked")
-        return "🔒 PC screen locked."
-    except Exception as e:
-        return f"❌ Could not lock screen: {str(e)}"
-
-
-async def system_power(action: str) -> str:
-    """
-    Shutdown, restart, or sleep the PC.
-
-    Args:
-        action: One of 'shutdown', 'restart', 'sleep'.
-
-    Returns:
-        Status message.
-    """
-    action = action.lower().strip()
-
-    try:
-        if action == "shutdown":
-            subprocess.Popen(["shutdown", "/s", "/t", "30"], creationflags=subprocess.DETACHED_PROCESS)
-            logger.info("Shutdown initiated (30s delay)")
-            return "⚠️ PC will shut down in 30 seconds.\nRun `shutdown /a` to cancel."
-
-        elif action == "restart":
-            subprocess.Popen(["shutdown", "/r", "/t", "30"], creationflags=subprocess.DETACHED_PROCESS)
-            logger.info("Restart initiated (30s delay)")
-            return "⚠️ PC will restart in 30 seconds.\nRun `shutdown /a` to cancel."
-
-        elif action == "sleep":
-            subprocess.Popen(
-                ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
-                creationflags=subprocess.DETACHED_PROCESS,
-            )
-            logger.info("Sleep initiated")
-            return "😴 PC is going to sleep."
-
-        else:
-            return f"❌ Unknown power action: {action}\n💡 Use: shutdown, restart, or sleep"
-
-    except Exception as e:
-        logger.error(f"Power action error: {e}")
-        return f"❌ Error: {str(e)}"
-
-
-async def control_volume(level: str) -> str:
-    """
-    Control system volume.
-
-    Args:
-        level: 'up', 'down', 'mute', 'unmute', or a number 0-100.
-
-    Returns:
-        Status message.
-    """
-    try:
-        from ctypes import cast, POINTER
-        from comtypes import CLSCTX_ALL
-        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-
-        devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        volume = cast(interface, POINTER(IAudioEndpointVolume))
-
-        level_str = level.lower().strip()
-
-        if level_str == "mute":
-            volume.SetMute(1, None)
-            return "🔇 Volume muted."
-        elif level_str == "unmute":
-            volume.SetMute(0, None)
-            return "🔊 Volume unmuted."
-        elif level_str == "up":
-            current = volume.GetMasterVolumeLevelScalar()
-            new_level = min(1.0, current + 0.1)
-            volume.SetMasterVolumeLevelScalar(new_level, None)
-            return f"🔊 Volume up: {int(new_level * 100)}%"
-        elif level_str == "down":
-            current = volume.GetMasterVolumeLevelScalar()
-            new_level = max(0.0, current - 0.1)
-            volume.SetMasterVolumeLevelScalar(new_level, None)
-            return f"🔉 Volume down: {int(new_level * 100)}%"
-        else:
-            try:
-                pct = int(level_str)
-                pct = max(0, min(100, pct))
-                volume.SetMasterVolumeLevelScalar(pct / 100.0, None)
-                return f"🔊 Volume set to {pct}%"
-            except ValueError:
-                return f"❌ Invalid volume level: {level}\n💡 Use: up, down, mute, unmute, or 0-100"
-
-    except ImportError:
-        return (
-            "❌ Volume control requires `pycaw`. Install it:\n"
-            "`pip install pycaw comtypes`"
-        )
-    except Exception as e:
-        return f"❌ Volume error: {str(e)}"

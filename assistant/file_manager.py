@@ -9,6 +9,8 @@ import os
 import glob
 from typing import Optional
 
+import config
+
 
 async def read_file(file_path: str) -> str:
     """
@@ -21,7 +23,9 @@ async def read_file(file_path: str) -> str:
         File contents as string, or error message.
     """
     try:
-        file_path = os.path.abspath(file_path)
+        file_path = _normalize_path(file_path)
+        if not _is_path_allowed(file_path):
+            return "❌ Access denied: path is outside allowed directories."
 
         if not os.path.exists(file_path):
             return f"❌ File not found: {file_path}"
@@ -63,22 +67,7 @@ async def write_file(file_path: str, content: str) -> str:
     Returns:
         Success or error message.
     """
-    try:
-        file_path = os.path.abspath(file_path)
-
-        # Create parent directories if they don't exist
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        size = os.path.getsize(file_path)
-        return f"✅ File written successfully: {file_path} ({_format_size(size)})"
-
-    except PermissionError:
-        return f"❌ Permission denied: {file_path}"
-    except Exception as e:
-        return f"❌ Error writing file: {str(e)}"
+    return "❌ Write operations are disabled by policy."
 
 
 async def delete_file(file_path: str) -> str:
@@ -91,22 +80,7 @@ async def delete_file(file_path: str) -> str:
     Returns:
         Success or error message.
     """
-    try:
-        file_path = os.path.abspath(file_path)
-
-        if not os.path.exists(file_path):
-            return f"❌ File not found: {file_path}"
-
-        if os.path.isdir(file_path):
-            return f"❌ Cannot delete a directory with this command."
-
-        os.remove(file_path)
-        return f"✅ File deleted: {file_path}"
-
-    except PermissionError:
-        return f"❌ Permission denied: {file_path}"
-    except Exception as e:
-        return f"❌ Error deleting file: {str(e)}"
+    return "❌ Delete operations are disabled by policy."
 
 
 async def list_files(directory: str) -> str:
@@ -120,7 +94,9 @@ async def list_files(directory: str) -> str:
         Formatted listing or error message.
     """
     try:
-        directory = os.path.abspath(directory)
+        directory = _normalize_path(directory)
+        if not _is_path_allowed(directory):
+            return "❌ Access denied: directory is outside allowed paths."
 
         if not os.path.exists(directory):
             return f"❌ Directory not found: {directory}"
@@ -176,7 +152,9 @@ async def search_files(query: str, directory: str = "C:\\") -> str:
         List of matching files or error message.
     """
     try:
-        directory = os.path.abspath(directory)
+        directory = _normalize_path(directory)
+        if not _is_path_allowed(directory):
+            return "❌ Access denied: directory is outside allowed paths."
 
         if not os.path.isdir(directory):
             return f"❌ Directory not found: {directory}"
@@ -221,8 +199,8 @@ def get_file_path(file_path: str) -> Optional[str]:
     Returns:
         Absolute path if valid, None otherwise.
     """
-    file_path = os.path.abspath(file_path)
-    if os.path.isfile(file_path):
+    file_path = _normalize_path(file_path)
+    if _is_path_allowed(file_path) and os.path.isfile(file_path):
         return file_path
     return None
 
@@ -237,3 +215,17 @@ def _format_size(size_bytes: int) -> str:
         return f"{size_bytes / 1024 / 1024:.1f} MB"
     else:
         return f"{size_bytes / 1024 / 1024 / 1024:.2f} GB"
+
+
+def _normalize_path(path_value: str) -> str:
+    return os.path.normcase(os.path.abspath(os.path.expandvars(os.path.expanduser(path_value))))
+
+
+def _is_path_allowed(path_value: str) -> bool:
+    allowed = config.ALLOWED_FILE_DIRS
+    if not allowed:
+        return False
+    try:
+        return any(os.path.commonpath([path_value, base]) == base for base in allowed)
+    except ValueError:
+        return False

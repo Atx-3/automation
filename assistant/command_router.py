@@ -1,5 +1,5 @@
 """
-command_router.py — Intent-to-action routing for Chapna AI Assistant.
+command_router.py — Intent-to-action routing for Clawbot.
 
 Takes the structured JSON output from the LLM and dispatches
 to the appropriate action handler. Includes confirmation flow
@@ -10,19 +10,30 @@ import os
 from typing import Optional
 
 from file_manager import (
-    read_file, write_file, delete_file,
-    list_files, search_files, get_file_path,
+    read_file, list_files, get_file_path,
 )
-from system_control import run_command, kill_process, get_system_info
-from app_controller import open_app, run_safe_script, lock_screen, system_power, control_volume
+from system_control import get_system_info
+from app_controller import open_app, run_safe_script
 from screenshot import take_screenshot
-from messaging import send_message
 from permissions import check_permission
+import config
 import database
 
 
 # Actions that require user confirmation before executing
-DANGEROUS_ACTIONS = {"delete_file", "kill_process", "shutdown", "clear_history"}
+ALLOWED_ACTIONS = {
+    "open_app",
+    "read_file",
+    "list_files",
+    "send_file",
+    "screenshot",
+    "run_script",
+    "status",
+    "help",
+    "chat",
+}
+
+DANGEROUS_ACTIONS = {"run_script"}
 
 # Pending confirmations: {user_id: {action, parameters}}
 _pending_confirmations: dict[int, dict] = {}
@@ -54,8 +65,31 @@ async def route_command(
     confidence = parsed.get("confidence", 0.0)
     intent = parsed.get("intent", "")
 
+    if action not in ALLOWED_ACTIONS:
+        database.log_command(
+            user_id=user_id,
+            command=f"{action}",
+            action=action,
+            parameters=params,
+            result="Action not allowed",
+            success=False,
+        )
+        return {
+            "text": f"🚫 Action not allowed: {action}",
+            "file_path": None,
+            "needs_confirmation": False,
+        }
+
     # ── Permission Check ──────────────────────────────────────────
     if not check_permission(user_id, action):
+        database.log_command(
+            user_id=user_id,
+            command=f"{action}",
+            action=action,
+            parameters=params,
+            result="Permission denied",
+            success=False,
+        )
         return {
             "text": f"🚫 You don't have permission to perform: {action}",
             "file_path": None,
@@ -64,6 +98,14 @@ async def route_command(
 
     # ── Low confidence → fall back to chat ────────────────────────
     if confidence < 0.3 and action != "chat":
+        database.log_command(
+            user_id=user_id,
+            command=f"{action}",
+            action=action,
+            parameters=params,
+            result="Low confidence",
+            success=False,
+        )
         return {
             "text": (
                 f"🤔 I'm not confident enough to execute that "
@@ -82,6 +124,14 @@ async def route_command(
             "parameters": params,
         }
         desc = _describe_action(action, params)
+        database.log_command(
+            user_id=user_id,
+            command=f"{action}",
+            action=action,
+            parameters=params,
+            result="Confirmation required",
+            success=False,
+        )
         return {
             "text": (
                 f"⚠️ **Confirmation Required**\n\n"
@@ -152,24 +202,17 @@ async def _execute_action(
         if action == "open_app":
             result["text"] = await open_app(params.get("app_name", ""))
 
-        elif action == "run_command":
-            result["text"] = await run_command(params.get("command", ""))
-
         elif action == "read_file":
-            content = await read_file(params.get("file_path", ""))
-            result["text"] = f"📄 **{params.get('file_path', '')}**\n\n{content}"
-
-        elif action == "write_file":
-            result["text"] = await write_file(
-                params.get("file_path", ""),
-                params.get("content", ""),
-            )
-
-        elif action == "delete_file":
-            result["text"] = await delete_file(params.get("file_path", ""))
+            file_path = params.get("file_path", "")
+            if not file_path:
+                result["text"] = "❌ Missing file_path."
+            else:
+                content = await read_file(file_path)
+                result["text"] = f"📄 **{file_path}**\n\n{content}"
 
         elif action == "list_files":
-            result["text"] = await list_files(params.get("directory", "."))
+            directory = params.get("directory") or (config.ALLOWED_FILE_DIRS[0] if config.ALLOWED_FILE_DIRS else ".")
+            result["text"] = await list_files(directory)
 
         elif action == "send_file":
             file_path = params.get("file_path", "")
@@ -188,63 +231,8 @@ async def _execute_action(
                 result["text"] = "📸 Screenshot captured!"
                 result["file_path"] = screenshot_path
 
-        elif action == "system_info":
-            result["text"] = await get_system_info()
-
-        elif action == "send_message":
-            result["text"] = await send_message(
-                platform=params.get("platform", ""),
-                to=params.get("to", ""),
-                subject=params.get("subject", ""),
-                body=params.get("body", ""),
-            )
-
-        elif action == "kill_process":
-            result["text"] = await kill_process(params.get("process_name", ""))
-
-        elif action == "search_files":
-            result["text"] = await search_files(
-                query=params.get("query", ""),
-                directory=params.get("directory", "C:\\"),
-            )
-
         elif action == "run_script":
             result["text"] = await run_safe_script(params.get("script_name", ""))
-
-        elif action == "volume":
-            result["text"] = await control_volume(params.get("level", ""))
-
-        elif action == "lock":
-            result["text"] = await lock_screen()
-
-        elif action == "shutdown":
-            power_action = params.get("action", "shutdown")
-            result["text"] = await system_power(power_action)
-
-        elif action == "save_note":
-            note_id = database.save_note(
-                user_id,
-                params.get("title", "Untitled"),
-                params.get("content", ""),
-            )
-            result["text"] = f"📝 Note saved! (ID: {note_id})"
-
-        elif action == "get_notes":
-            notes = database.get_notes(user_id)
-            if notes:
-                lines = ["📝 **Your Notes:**\n"]
-                for n in notes:
-                    lines.append(f"  **#{n['id']}** — {n['title']}")
-                    if n["content"]:
-                        lines.append(f"    {n['content'][:100]}")
-                    lines.append(f"    _{n['created_at']}_\n")
-                result["text"] = "\n".join(lines)
-            else:
-                result["text"] = "📝 No notes saved yet."
-
-        elif action == "clear_history":
-            count = database.clear_history(user_id)
-            result["text"] = f"🧹 Cleared {count} messages from history."
 
         elif action == "status":
             result["text"] = await get_system_info()
@@ -291,10 +279,7 @@ async def _execute_action(
 def _describe_action(action: str, params: dict) -> str:
     """Create a human-readable description of an action."""
     descriptions = {
-        "delete_file": f"🗑️ Delete file: {params.get('file_path', 'unknown')}",
-        "kill_process": f"💀 Kill process: {params.get('process_name', 'unknown')}",
-        "shutdown": f"⚡ Power: {params.get('action', 'shutdown')}",
-        "clear_history": "🧹 Clear all conversation history",
+        "run_script": f"📜 Run script: {params.get('script_name', 'unknown')}",
     }
     return descriptions.get(action, f"{action} with params {params}")
 
@@ -302,34 +287,23 @@ def _describe_action(action: str, params: dict) -> str:
 def _get_help_text() -> str:
     """Return the help text showing available commands."""
     return (
-        "🤖 **Chapna — Your Personal AI Assistant**\n\n"
+        "🤖 **Clawbot — Your Personal AI Assistant**\n\n"
         "Just tell me what you want in natural language! Examples:\n\n"
         "📂 **Files:**\n"
         '  • "Show me files on my Desktop"\n'
         '  • "Read the file C:\\notes.txt"\n'
         '  • "Send me the report.pdf from Documents"\n'
-        '  • "Create a file called test.txt with Hello World"\n'
-        '  • "Delete old_file.txt"\n'
-        '  • "Search for .py files in my projects"\n\n'
+        "\n"
         "🖥️ **System:**\n"
         '  • "Open Chrome"\n'
         '  • "Open Notepad"\n'
-        '  • "Run ipconfig command"\n'
-        '  • "Show system info"\n'
-        '  • "Kill notepad process"\n'
         '  • "Take a screenshot"\n'
-        '  • "Lock my PC"\n'
-        '  • "Set volume to 50"\n\n'
-        "📧 **Messaging:**\n"
-        '  • "Send an email to john@email.com"\n\n'
-        "📝 **Notes:**\n"
-        '  • "Save a note: Buy groceries"\n'
-        '  • "Show my notes"\n\n'
+        "\n"
+        "📜 **Scripts:**\n"
+        '  • "Run the backup script"\n\n'
         "📋 **Commands:**\n"
-        "  /start — Start Chapna\n"
+        "  /start — Start Clawbot\n"
         "  /help — This help menu\n"
         "  /status — System status\n"
         "  /screenshot — Quick screenshot\n"
-        "  /stats — Your usage stats\n"
-        "  /clear — Clear chat history\n"
     )

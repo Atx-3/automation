@@ -2,7 +2,6 @@
 permissions.py — Role-based access control for Chapna AI Assistant.
 
 Defines user roles and maps permissions to actions.
-Owner role has full access to all actions.
 """
 
 from enum import Enum
@@ -30,23 +29,12 @@ ACTION_PERMISSIONS: dict[str, UserRole] = {
     # Operator+
     "read_file": UserRole.OPERATOR,
     "list_files": UserRole.OPERATOR,
-    "search_files": UserRole.OPERATOR,
     "screenshot": UserRole.OPERATOR,
-    "system_info": UserRole.OPERATOR,
 
     # Owner only
     "open_app": UserRole.OWNER,
-    "run_command": UserRole.OWNER,
-    "write_file": UserRole.OWNER,
-    "delete_file": UserRole.OWNER,
     "send_file": UserRole.OWNER,
-    "send_message": UserRole.OWNER,
-    "kill_process": UserRole.OWNER,
     "run_script": UserRole.OWNER,
-    "shutdown": UserRole.OWNER,
-    "restart": UserRole.OWNER,
-    "lock": UserRole.OWNER,
-    "volume": UserRole.OWNER,
 }
 
 
@@ -80,7 +68,7 @@ def check_permission(user_id: int, action: str) -> bool:
         True if the user has sufficient role for the action.
     """
     user_role = get_user_role(user_id)
-    required_role = ACTION_PERMISSIONS.get(action, UserRole.OWNER)
+    required_role = ACTION_PERMISSIONS.get(action, UserRole.NONE)
     return user_role.value >= required_role.value
 
 
